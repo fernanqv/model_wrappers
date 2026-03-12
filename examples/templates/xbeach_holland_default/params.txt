@@ -10,7 +10,7 @@
 %%% Grid parameters %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 depfile   = bed.dep
-posdwn    = 0
+posdwn    = {{var_fixed}}
 nx        = 230
 ny        = 0
 alfa      = 0

@@ -48,22 +48,65 @@ wrapper = HollandWrapper(
     variable_parameters=variable_parameters,
     fixed_parameters=fixed_parameters,
     output_dir=output_dir,
-    num_workers=2  # Number of parallel processes
+    mode="all_combinations"  # Default mode for case generation
 )
 
 # 6. Generate cases (rendering templates)
-# mode="all_combinations" will generate all possible combinations of variable parameters
-# mode="one_by_one" will pair parameters by index
-wrapper.build_cases(mode="all_combinations")
+# The mode defined in __init__ will be used by default
+wrapper.build_cases()
 
 # 7. Run cases using a launcher command (optional)
 launcher_cmd = "sbatch /path/to/your/launcher.sh"
 wrapper.run_cases(launcher=launcher_cmd)
 ```
 
+### Advanced Usage
+
+#### Inspecting Case Parameters
+You can inspect the parameters of all generated cases using `get_context()`. This is particularly useful after `load_cases()` or before `build_cases()`.
+
+```python
+# 8. Inspect the context (optional)
+# This returns a DataFrame (if pandas is installed) with parameters and 'case_dir'
+df_context = wrapper.get_context()
+print(df_context)
+```
+
+#### Building a Subset of Cases
+If you only want to build or re-build specific cases, you can pass a list of indices to `build_cases()`.
+
+```python
+# Only build the first and sixth cases (indices 0 and 5)
+wrapper.build_cases(cases=[0, 5])
+```
+
+#### Custom Case Naming
+You can customize how the case directories are named. This can be defined at the instance level (recommended) or overridden in `build_cases()`. It supports both string templates and functions.
+
+**Option A: String Template (Recommended)**
+Use standard Python format strings. Any variable parameter name or `case_num` can be used.
+```python
+wrapper = HollandWrapper(
+    ...,
+    cases_name_format="case_{var1:04}_{var2:04}"
+)
+```
+
+**Option B: Callable (Function/Lambda)**
+For more complex logic, pass a function that receives the case context dictionary.
+```python
+def my_custom_naming(ctx):
+    prefix = "high" if ctx["var1"] > 226 else "low"
+    return f"{prefix}_case_{ctx['case_num']}"
+
+wrapper.build_cases(cases_name_format=my_custom_naming)
+```
+
 ## Key Features
 
 - **Jinja2 Templating**: Easily inject parameters into model input files.
-- **Parallel Execution**: efficient case building and running using `concurrent.futures`.
-- **Flexible Parameters**: Support for exhaustive combinations or specific case pairs.
+- **Flexible selective building**: Build only the cases you need with `wrapper.build_cases(cases=[0, 5])`.
+- **Custom directory naming**: Support for string templates (e.g., `"{var1}_{case_num}"`) or functions.
+- **Easy context access**: Use `wrapper.get_context()` to see all case parameters and their absolute directory paths.
+- **Template validation**: Automatic check for `templates_dir` existence during initialization.
 - **Launcher Support**: Seamless integration with Slurm or local shell scripts.
