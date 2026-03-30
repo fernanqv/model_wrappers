@@ -144,6 +144,244 @@ def my_custom_naming(ctx):
 wrapper.build_cases(cases_name_format=my_custom_naming)
 ```
 
+## Creating Custom Wrapper Classes
+
+The power of Galerna lies in its extensibility. You can create child classes that inherit from `Galerna` to add custom behavior for your specific workflow. This is useful when you need to:
+
+- **Build custom inputs** for each case (e.g., generate configuration files based on parameters)
+- **Extract and postprocess results** after cases run (e.g., read output files and aggregate metrics)
+- **Define convenient launcher aliases** for your environment
+- **Implement complex multi-step workflows** (build → run → postprocess combined)
+
+### Extension Points: Overridable Methods
+
+The following methods can be overridden in your child class to customize behavior:
+
+| Method | Purpose | When to Override |
+|--------|---------|------------------|
+| `build_case(case_context)` | Add custom build logic for each case **before** templates are rendered | Generate case-specific input files, compute derived parameters, create case-specific directories |
+| `available_launchers` (class dict) | Define command aliases for easy reuse | Create shortcuts for common commands (e.g., `"local"`, `"slurm"`) |
+| `postprocess_case(**kwargs)` | Extract or process individual case results | Read output files, compute metrics, validate results for a single case |
+| `postprocess_cases(cases, ...)` | Aggregate results from multiple cases | Combine metrics, create summary reports, perform statistical analysis |
+
+### Example 1: Custom Build Logic
+
+This example shows how to generate a case-specific parameter file before templates are rendered:
+
+```python
+from galerna import Galerna
+import json
+
+class CustomBuildWrapper(Galerna):
+    """
+    Example wrapper that generates case-specific fit_params.yaml
+    based on variable parameters.
+    """
+    
+    available_launchers = {
+        "default": "python run_model.py",
+        "slurm": "sbatch run_slurm.sh"
+    }
+    
+    def build_case(self, case_context: dict) -> None:
+        """
+        Generate case-specific configuration files.
+        This is called BEFORE templates are rendered.
+        """
+        case_dir = case_context["case_dir"]
+        
+        # Example: create a JSON config file with case parameters
+        config = {
+            "version": case_context.get("version", "1.0"),
+            "param1": case_context.get("var1"),
+            "param2": case_context.get("var2"),
+        }
+        
+        config_path = os.path.join(case_dir, "case_config.json")
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+        
+        self.logger.info(f"Generated {config_path}")
+
+# Usage:
+wrapper = CustomBuildWrapper(
+    templates_dir="templates/my_model",
+    variable_parameters={"var1": [1, 2, 3], "var2": [10, 20]},
+    output_dir="results",
+    mode="all_combinations"
+)
+
+wrapper.build_cases()
+wrapper.run_cases()
+```
+
+### Example 2: Post-processing Results
+
+This realistic example, adapted from `examples/trasgu/custom_wrapper.py`, shows how to extract results from each case and aggregate them:
+
+```python
+from galerna import Galerna
+import os
+from typing import List, Any
+
+class PostprocessWrapper(Galerna):
+    """
+    Wrapper that runs a model, then extracts results from case directories.
+    Useful for parsing output files and aggregating metrics.
+    """
+    
+    available_launchers = {
+        "default": "trasgu_time_fit fit_params.yaml 1>time_fit.log 2>time_fit.err"
+    }
+    
+    def postprocess_case(self, case_context: dict, **kwargs) -> Any:
+        """
+        Extract results from a single case.
+        Called after the case has been run.
+        
+        Returns
+        -------
+        Any
+            The extracted result (can be a dict, scalar, or any Python object)
+        """
+        case_dir = case_context.get("case_dir")
+        if not case_dir:
+            return None
+        
+        # Example: read the last line from an output file
+        output_file = os.path.join(case_dir, "model_output.log")
+        
+        if not os.path.isfile(output_file):
+            self.logger.warning(f"Output file not found: {output_file}")
+            return None
+        
+        try:
+            with open(output_file, "r") as f:
+                lines = f.readlines()
+                # Extract the last line (often contains summary/error info)
+                if lines:
+                    result = lines[-1].strip()
+                    self.logger.debug(f"Extracted from {output_file}: {result}")
+                    return result
+            return None
+        except Exception as e:
+            self.logger.error(f"Error reading {output_file}: {e}")
+            return None
+    
+    def postprocess_cases(
+        self,
+        cases: List[int] = None,
+        clean_after: bool = False,
+        overwrite: bool = False,
+        **kwargs,
+    ) -> List[Any]:
+        """
+        Aggregate results from all or selected cases.
+        
+        Parameters
+        ----------
+        cases : List[int], optional
+            Case indices to postprocess. If None, processes all.
+        clean_after : bool, optional
+            Clean case directories after postprocessing. Default False.
+        overwrite : bool, optional
+            Overwrite existing results. Default False.
+        **kwargs
+            Additional arguments passed to postprocess_case.
+        
+        Returns
+        -------
+        List[Any]
+            Results from all processed cases.
+        """
+        if cases is not None:
+            contexts_to_process = [self.cases_context[i] for i in cases]
+        else:
+            contexts_to_process = self.cases_context
+        
+        self.logger.info(f"Postprocessing {len(contexts_to_process)} cases...")
+        results = []
+        
+        for context in contexts_to_process:
+            result = self.postprocess_case(case_context=context, **kwargs)
+            results.append(result)
+        
+        return results
+
+# Usage:
+wrapper = PostprocessWrapper(
+    templates_dir="templates/trasgu",
+    variable_parameters={"version": ["v1", "v2"], "np": [2, 4, 8]},
+    output_dir="results",
+    mode="all_combinations"
+)
+
+# Complete workflow: build → run → postprocess
+wrapper.build_cases()
+wrapper.run_cases(num_workers=4)  # Run in parallel
+results = wrapper.postprocess_cases()
+
+print("Results from all cases:")
+for case_num, result in enumerate(results):
+    print(f"  Case {case_num}: {result}")
+```
+
+### Complete End-to-End Workflow
+
+Here's how to combine all steps (build, run, postprocess) in a single workflow:
+
+```python
+from galerna import Galerna
+
+# 1. Define wrapper class with custom behavior
+class MyWrapper(Galerna):
+    available_launchers = {
+        "default": "bash run.sh",
+        "local": "python model.py"
+    }
+    
+    def build_case(self, case_context: dict) -> None:
+        # Custom build logic here
+        pass
+    
+    def postprocess_case(self, case_context: dict, **kwargs) -> dict:
+        # Extract metrics/results here
+        return {"case_num": case_context["case_num"], "status": "completed"}
+
+# 2. Instantiate with parameters
+wrapper = MyWrapper(
+    templates_dir="my_templates",
+    variable_parameters={
+        "param_a": [1, 2],
+        "param_b": [10, 20, 30]
+    },
+    output_dir="my_results",
+    mode="all_combinations"
+)
+
+# 3. Inspect what will be generated
+context_df = wrapper.get_context()
+print("Cases to generate:")
+print(context_df)
+
+# 4. Build cases (create directories and render templates)
+wrapper.build_cases()
+
+# 5. Run all cases (in parallel with 4 workers)
+wrapper.run_cases(num_workers=4)
+
+# 6. Postprocess to extract results
+results = wrapper.postprocess_cases()
+
+# 7. Optionally, run specific cases later
+wrapper.run_cases(cases_to_run=[0, 2])
+results_subset = wrapper.postprocess_cases(cases=[0, 2])
+
+# 8. Inspect results
+for i, result in enumerate(results):
+    print(f"Case {i}: {result}")
+```
+
 ## Key Features
 
 - **Jinja2 Templating**: Easily inject parameters into model input files.
