@@ -1,7 +1,7 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% XBeach parameter settings input file                                     %%%
 %%%                                                                          %%%
-%%% date:     09-Sep-2011 09:45:52                                           %%%
+%%% date:     09-Sep-2011 09:45:52                                                        %%%
 %%% function: xb_write_params                                                %%%
 %%%%%%%%%%%%%%%%
 % https://svn.oss.deltares.nl/repos/xbeach/skillbed/input/holland_default/params.txt
@@ -10,7 +10,7 @@
 %%% Grid parameters %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 depfile   = bed.dep
-posdwn    = {{var_fixed}}
+posdwn    = {{ var_fixed }}
 nx        = 230
 ny        = 0
 alfa      = 0
@@ -19,8 +19,8 @@ xfile     = x.grd
 yfile     = y.grd
 xori      = 0
 yori      = 0
-thetamin  = {{var1}}
-thetamax  = {{var2}}
+thetamin  = {{ var1 }}
+thetamax  = {{ var2 }}
 dtheta    = 90
 thetanaut = 1
 
@@ -32,8 +32,13 @@ zs0       = 5
 
 tstop     = 18000
 
+%%% Wave model %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+wavemodel = {{ wavemodel | default('surfbeat')}}
+
 %%% Wave boundary condition parameters %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+{% if wavemodel == 'surfbeat' %}
 instat    = jons
 random    = 0
 
@@ -43,6 +48,25 @@ bcfile    = jonswap.txt
 rt        = 1800
 dtbc      = 1
 
+{% elif wavemodel == 'nonh' %}
+instat    = ts_nonh
+random    = 0
+
+%%% Non-hydrostatic boundary condition parameters %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+bcfile    = {{ bcfile }}
+rt        = {{ rt | default(1800) }}
+dtbc      = {{ dtbc | default(1) }}
+
+{% elif wavemodel == 'stationary' %}
+instat    = stat
+
+%%% Stationary wave boundary condition parameters %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+bcfile    = {{ bcfile | default('jonswap.txt') }}
+
+{% endif %}
+
 %%% Output variables %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 tstart       = 0
@@ -50,4 +74,3 @@ tintg        = 3600
 outputformat = netcdf
 nglobalvar   = 1
 zb
-
