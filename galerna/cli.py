@@ -92,7 +92,7 @@ def main():
         
     if args.action in ["run", "all"]:
         print("Running cases...")
-        wrapper.run_cases(cases_to_run=cases_list)
+        wrapper.run_cases(cases=cases_list)
 
     if args.action in ["postprocess", "all"]:
         print("Postprocessing cases...")

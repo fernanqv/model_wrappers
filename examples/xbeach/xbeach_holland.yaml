@@ -16,5 +16,6 @@ variable_parameters:
 fixed_parameters: {}
 cases_name_format: "holland_{{ var1 }}_{{ var2 }}_{{np}}"
 mode: all_combinations
-custom_launcher: "echo {{np}}"
+launcher: parallel
+#custom_launcher: "echo {{np}}"
 #num_workers: 1

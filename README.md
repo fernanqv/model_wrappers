@@ -398,7 +398,7 @@ wrapper.run_cases(num_workers=4)
 results = wrapper.postprocess_cases()
 
 # 7. Optionally, run specific cases later
-wrapper.run_cases(cases_to_run=[0, 2])
+wrapper.run_cases(cases=[0, 2])
 results_subset = wrapper.postprocess_cases(cases=[0, 2])
 
 # 8. Inspect results

@@ -13,7 +13,8 @@ class XbeachWrapper(Galerna):
 
     available_launchers = {
         "default": "xbeach.exe",
-        "sci_unican": "/software/geocean/xbeach/launchXbeach.sh"
+        "sci_unican": "/software/geocean/xbeach/launchXbeach.sh",
+        "parallel": "echo {{np}} xbeach.exe"
     }
 
     def postprocess_case(self, case_context: dict, **kwargs) -> Any:
