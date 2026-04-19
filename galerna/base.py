@@ -37,10 +37,10 @@ class Galerna:
 
     def __init__(
         self,
-        templates_dir: Optional[str],
-        variable_parameters: Union[dict, str],
-        fixed_parameters: dict,
-        output_dir: str,
+        templates_dir: Optional[str] = None,
+        variable_parameters: Union[dict, str] = None,
+        fixed_parameters: Optional[dict] = None,
+        output_dir: str = "output",
         templates_name: Union[List[str], str] = "all",
         cases_name_format: Union[str, Callable] = '{{ "%04d" | format(case_num) }}',
         mode: str = "one_by_one",
@@ -59,13 +59,13 @@ class Galerna:
         Parameters
         ----------
         templates_dir : str, optional
-            The directory where the templates are searched.
-        variable_parameters : dict or str
-            The parameters to be used for all cases, or a path to a YAML file containing them.
-        fixed_parameters : dict
-            The fixed parameters for the cases.
-        output_dir : str
-            The directory where the output cases are saved.
+            The directory where the templates are searched. Default is None.
+        variable_parameters : dict or str, optional
+            The parameters to be used for all cases, or a path to a YAML file containing them. Default is empty dict.
+        fixed_parameters : dict, optional
+            The fixed parameters for the cases. Default is empty dict.
+        output_dir : str, optional
+            The directory where the output cases are saved. Default is 'output'.
         templates_name : Union[List[str], str], optional
             The names of the templates to use. Default is "all".
         cases_name_format : Union[str, Callable], optional
@@ -102,15 +102,18 @@ class Galerna:
         )
         
         self.templates_dir = templates_dir
-        if isinstance(variable_parameters, str):
+        if variable_parameters is None:
+            self.variable_parameters = {}
+        elif isinstance(variable_parameters, str):
             import yaml
             if not os.path.isfile(variable_parameters):
                 raise FileNotFoundError(f"variable_parameters file not found: {variable_parameters}")
             with open(variable_parameters, "r") as f:
-                self.variable_parameters = yaml.safe_load(f)
+                self.variable_parameters = yaml.safe_load(f) or {}
         else:
             self.variable_parameters = variable_parameters
-        self.fixed_parameters = fixed_parameters
+
+        self.fixed_parameters = fixed_parameters or {}
         self.output_dir = output_dir
         self.cases_name_format = cases_name_format
         self.mode = mode
@@ -141,6 +144,14 @@ class Galerna:
 
     def _generate_cases_context(self) -> None:
         """Generates the base cases context combinations and calculates directories."""
+        # Convert any string "range(x, y)" into a list of integers
+        for key, value in self.variable_parameters.items():
+            if isinstance(value, str) and value.strip().startswith("range("):
+                try:
+                    self.variable_parameters[key] = list(eval(value.strip()))
+                except Exception as e:
+                    self.logger.warning(f"Could not evaluate range for parameter {key}: {e}")
+
         if self.mode == "all_combinations":
             keys = self.variable_parameters.keys()
             values = self.variable_parameters.values()

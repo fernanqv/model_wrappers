@@ -52,7 +52,7 @@ def load_custom_wrapper(file_path: str, class_name: str = "CustomGalerna") -> Ty
 
 def main():
     parser = argparse.ArgumentParser(description="CLI for building and running model wrappers.")
-    parser.add_argument("action", choices=["build", "run", "postprocess", "all"], help="Action to perform.")
+    parser.add_argument("action", choices=["build", "run", "monitor", "postprocess", "all"], help="Action to perform.")
     parser.add_argument("--config", required=True, help="Path to the YAML configuration file.")
     parser.add_argument("--cases", type=str, help="Comma-separated list of case indices or ranges (e.g., '1,2,5-7') to process.")
     
@@ -76,7 +76,11 @@ def main():
         print(f"Loading custom wrapper from {wrapper_code_path}...")
         WrapperClass = load_custom_wrapper(wrapper_code_path, wrapper_class_name)
     else:
-        WrapperClass = Galerna
+        if wrapper_class_name == "BulkArrayRunner":
+            from galerna.bulk_array import BulkArrayRunner
+            WrapperClass = BulkArrayRunner
+        else:
+            WrapperClass = Galerna
         
     # Instantiate the wrapper
     # Remove CLI-specific keys from config to pass as kwargs
@@ -97,6 +101,13 @@ def main():
     if args.action in ["postprocess", "all"]:
         print("Postprocessing cases...")
         wrapper.postprocess_cases(cases=cases_list)
+        
+    if args.action in ["monitor", "all"]:
+        if hasattr(wrapper, "monitor_cases"):
+            print("Monitoring cases...")
+            wrapper.monitor_cases()
+        else:
+            print("Monitor action not supported by this wrapper class.")
 
 if __name__ == "__main__":
     main()
