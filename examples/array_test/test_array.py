@@ -10,7 +10,8 @@ def main():
         variable_parameters={"station": list(range(1, 16))},
         output_dir="output_array",
         mode="one_by_one",
-        launcher_template="job_template.sh"
+        command="python dummy_script.py {{station}}",
+        sbatch_template="/Users/valva/Library/CloudStorage/OneDrive-UNICAN/repos/galerna_old/examples/array_test/job_template.sh"
     )
     
     print("Building cases...")

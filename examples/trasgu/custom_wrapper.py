@@ -9,9 +9,6 @@ class FitPostprocessWrapper(Galerna):
     and postprocess_cases to accumulate and return the results.
     """
 
-    available_launchers = {
-        "default": "trasgu_time_fit fit_params.yaml 1>time_fit.log"
-    }
 
     def postprocess_case(self, case_context: dict, **kwargs) -> Any:
         """

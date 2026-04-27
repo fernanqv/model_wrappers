@@ -14,8 +14,6 @@ variable_parameters:
     - 2
     
 fixed_parameters: {}
-cases_name_format: "holland_{{ var1 }}_{{ var2 }}_{{np}}"
+#cases_name_format: "holland_{{ var1 }}_{{ var2 }}_{{np}}"
 mode: all_combinations
-launcher: parallel
-#custom_launcher: "echo {{np}}"
-#num_workers: 1
+command: "echo 'Running var1={{var1}}, var2={{var2}}, np={{np}}' && pwd"

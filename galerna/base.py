@@ -4,16 +4,15 @@ import itertools
 import logging
 import os
 import os.path as op
-import queue
 import subprocess
 import sys
-import threading
+import json
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from jinja2 import Environment, FileSystemLoader
 
-from .execution import exec_bash_command, parallel_execute
-from .utils import copy_files, get_simple_logger, write_array_in_file
+from .execution import exec_bash_command
+from .utils import copy_files, get_simple_logger      
 
 
 class Galerna:
@@ -31,9 +30,9 @@ class Galerna:
         The fixed parameters for the cases.
     output_dir : str
         The directory where the output cases are saved.
+    command : str
+        Bash command string rendered with Jinja2 per case.
     """
-
-    available_launchers = {}
 
     def __init__(
         self,
@@ -47,11 +46,9 @@ class Galerna:
         log_level: str = "INFO",
         log_file: Optional[str] = None,
         log_console: Optional[bool] = None,
-        num_workers: int = 1,
-        launcher: str = "default",
-        custom_launcher: Optional[str] = None,
-        launcher_bulk: str = "bulk_default",
-        custom_launcher_bulk: Optional[str] = None,
+        command: str = None,
+        launcher_bulk: Optional[str] = None,
+        save_context: bool = True,
     ) -> None:
         """
         Initializes the Galerna instance.
@@ -80,16 +77,12 @@ class Galerna:
         log_console : bool, optional
             Whether to output logs to the console. 
             If None, it defaults to True if log_file is None, and False otherwise.
-        num_workers : int, optional
-            The number of workers to use for parallel execution. Default is 1.
-        launcher : str, optional
-            Alias for the launcher command to be picked from available_launchers. Default is "default".
-        custom_launcher : str, optional
-            Arbitrary bash command string rendered with Jinja2 per case. Overrides launcher.
+        command : str
+            Bash command string rendered with Jinja2 per case.
         launcher_bulk : str, optional
-            Alias for bulk launcher from available_launchers. Default is "bulk_default".
-        custom_launcher_bulk : str, optional
-            Arbitrary bulk bash command rendered with Jinja2. Overrides launcher_bulk.
+            Bash command rendered with Jinja2 for bulk execution.
+        save_context : bool, optional
+            Whether to save the cases context as a JSON file in the output directory. Default is False 
         """
         if log_console is None:
             log_console = log_file is None
@@ -104,6 +97,8 @@ class Galerna:
         self.templates_dir = templates_dir
         if variable_parameters is None:
             self.variable_parameters = {}
+
+        # Is variable_parameters is a string, we assume it is a path to a YAML file and we load it
         elif isinstance(variable_parameters, str):
             import yaml
             if not os.path.isfile(variable_parameters):
@@ -117,11 +112,9 @@ class Galerna:
         self.output_dir = output_dir
         self.cases_name_format = cases_name_format
         self.mode = mode
-        self.num_workers = num_workers
-        self.launcher = launcher
-        self.custom_launcher = custom_launcher
+        self.command = command
+        self.save_context = save_context
         self.launcher_bulk = launcher_bulk
-        self.custom_launcher_bulk = custom_launcher_bulk
 
         if self.templates_dir is not None:
             if not os.path.isdir(self.templates_dir):
@@ -137,9 +130,14 @@ class Galerna:
 
         self.cases_context: List[dict] = []
         self._generate_cases_context()
-
-        self._thread: Optional[threading.Thread] = None
-        self._status_queue: Optional[queue.Queue] = None
+    
+        if self.save_context:
+            import json
+            context_path = op.join(self.output_dir, "cases_context.json")
+            os.makedirs(self.output_dir, exist_ok=True)
+            with open(context_path, "w") as f:
+                json.dump(self.cases_context, f, indent=4)
+            self.logger.info(f"Cases context saved to {context_path}")
 
 
     def _generate_cases_context(self) -> None:
@@ -176,12 +174,20 @@ class Galerna:
             if isinstance(self.cases_name_format, str):
                 if self.env:
                     name = self.env.from_string(self.cases_name_format).render(context)
+                    command_cmd = self.env.from_string(self.command).render(context)
                 else:
                     from jinja2 import Template
                     name = Template(self.cases_name_format).render(context)
+                    command_cmd = Template(self.command).render(context)
             else:
                 name = self.cases_name_format(context)
-            context["case_dir"] = op.abspath(op.join(self.output_dir, name))
+
+            if self.templates_dir is None:
+                context["case_dir"] = op.abspath(self.output_dir)
+            else:
+                context["case_dir"] = op.abspath(op.join(self.output_dir, name))
+            
+            context["command_cmd"] = command_cmd
 
     @property
     def logger(self) -> logging.Logger:
@@ -241,6 +247,8 @@ class Galerna:
         case_context : dict
             The context (parameters) for this specific case.
         """
+
+        # If templates_dir is not defined, we create commands.txt with the rendered command for each case, instead of creating
         case_dir = case_context["case_dir"]
         self.logger.debug(f"Building case {case_context.get('case_num')} in {case_dir}")
         os.makedirs(case_dir, exist_ok=True)
@@ -274,9 +282,29 @@ class Galerna:
         else:
             contexts_to_build = self.cases_context
 
+
         self.logger.debug(f"Starting to build {len(contexts_to_build)} cases.")
-        for context in contexts_to_build:
-            self.build_case_and_render_files(context)
+        if self.templates_dir is None:
+            commands_file = op.join(self.output_dir, "commands.txt")
+
+            # Determine how to write each line in commands.txt
+            eval_str = getattr(self, "command", None)
+
+            from jinja2 import Template
+            with open(commands_file, "w") as f:
+                for ctx in contexts_to_build:
+                    if eval_str:
+                        if self.env:
+                            line = self.env.from_string(eval_str).render(ctx)
+                        else:
+                            line = Template(eval_str).render(ctx)
+                    else:
+                        line = json.dumps(ctx)
+                    f.write(line + "\n")
+                return
+        else: 
+            for context in contexts_to_build:
+                self.build_case_and_render_files(context)
 
     def run_case(
         self,
@@ -285,7 +313,7 @@ class Galerna:
         error_log_file: str = "wrapper_error.log",
     ) -> None:
         """
-        Run the case based on the launcher derived from the case context or defaults.
+        Run the case based on the command derived from the case context.
 
         Parameters
         ----------
@@ -299,30 +327,17 @@ class Galerna:
 
         context = self.cases_context[case_num]
         
-        if getattr(self, "custom_launcher", None):
-            launcher_str = self.custom_launcher
-        else:
-            if self.launcher not in self.available_launchers:
-                raise ValueError(
-                    f"Launcher alias '{self.launcher}' not found in available_launchers. "
-                    "If you want to use an arbitrary command, use 'custom_launcher'."
-                )
-            launcher_str = self.available_launchers[self.launcher]
-
-        if self.env:
-            launcher_cmd = self.env.from_string(launcher_str).render(context)
-        else:
-            from jinja2 import Template
-            launcher_cmd = Template(launcher_str).render(context)
-            
+        if not context["command_cmd"]:
+            raise ValueError("command is not defined. Please set it in __init__.")
+        
         case_dir = self.cases_dirs[case_num]
 
         # Run the case in the case directory
-        self.logger.info(f"Running case {case_num} in {case_dir} with launcher={launcher_cmd}.")
+        self.logger.info(f"Running case {case_num} in {case_dir} with command={context.command_cmd}.")
         output_log_file = op.join(case_dir, output_log_file)
 
         exec_bash_command(
-            cmd=launcher_cmd,
+            cmd=context.command_cmd,
             cwd=case_dir,
             log_output=True,
             logger=self.logger,
@@ -331,19 +346,15 @@ class Galerna:
     def run_cases(
         self,
         cases: List[int] = None,
-        num_workers: int = None,
     ) -> None:
         """
-        Run the cases.
+        Run the cases sequentially.
         Cases to run can be specified.
-        Parallel execution is optional by modifying the num_workers parameter.
 
         Parameters
         ----------
         cases : List[int], optional
             The list with the cases to run. Default is None.
-        num_workers : int, optional
-            The number of parallel workers. Default is None.
         """
 
         if self.cases_context is None or self.cases_dirs is None:
@@ -351,166 +362,57 @@ class Galerna:
                 "Cases context or cases directories are not set. Please run load_cases() first."
             )
 
-        if num_workers is None:
-            num_workers = self.num_workers
-
         if cases is not None:
-            self.logger.warning(
+            self.logger.info(
                 f"Cases to run was specified, so just {cases} will be run."
             )
             cases_list = cases
         else:
             cases_list = list(range(len(self.cases_dirs)))
 
-        if num_workers > 1:
-            self.logger.debug(
-                f"Running cases in parallel. Number of workers: {num_workers}."
-            )
-            _results = parallel_execute(
-                func=self.run_case,
-                items=cases_list,
-                num_workers=num_workers,
-                logger=self.logger,
-            )
-        else:
-            self.logger.debug(f"Running cases sequentially.")
-            for case_num in cases_list:
-                try:
-                    self.run_case(
-                        case_num=case_num,
-                    )
-                except Exception as exc:
-                    self.logger.error(
-                        f"Job for case {case_num} generated an exception: {exc}."
-                    )
+        self.logger.debug(f"Running cases sequentially.")
+        for case_num in cases_list:
+            try:
+                self.run_case(
+                    case_num=case_num,
+                )
+            except Exception as exc:
+                self.logger.error(
+                    f"Job for case {case_num} generated an exception: {exc}."
+                )
 
         self.logger.info("All cases executed.")
 
-    def _run_cases_with_status(
-        self,
-        cases: List[int],
-        num_workers: int,
-        status_queue: queue.Queue,
-    ) -> None:
-        """
-        Run the cases and update the status queue.
-
-        Parameters
-        ----------
-        cases : List[int]
-            The list with the cases to run.
-        num_workers : int
-            The number of parallel workers.
-        status_queue : Queue
-            The queue to update the status.
-        """
-
-        try:
-            self.run_cases(cases, num_workers)
-            status_queue.put("Completed")
-        except Exception as e:
-            status_queue.put(f"Error: {e}")
-
-    def run_cases_in_background(
-        self,
-        cases: List[int] = None,
-        num_workers: int = None,
-        detached: bool = False,
-    ) -> None:
-        """
-        Run the cases in the background.
-        Cases to run can be specified.
-        Parallel execution is optional by modifying the num_workers parameter.
-
-        Parameters
-        ----------
-        cases : List[int], optional
-            The list with the cases to run. Default is None.
-        num_workers : int, optional
-            The number of parallel workers. Default is None.
-        detached : bool, optional
-            If True, runs the process completely detached from the parent.
-            If False, runs in a background thread of the parent process. Default is False.
-        """
-
-        if num_workers is None:
-            num_workers = self.num_workers
-
-        if detached:
-            from .execution import run_detached
-            self.logger.info("Running cases in a fully detached background process.")
-            run_detached(self.run_cases, cases, num_workers)
-        else:
-            if not hasattr(self, "status_queue") or self.status_queue is None:
-                self.status_queue = queue.Queue()
-            self.thread = threading.Thread(
-                target=self._run_cases_with_status,
-                args=(cases, num_workers, self.status_queue),
-            )
-            self.thread.start()
-
-    def get_thread_status(self) -> str:
-        """
-        Get the status of the background thread.
-
-        Returns
-        -------
-        str
-            The status of the background thread.
-        """
-
-        if self.thread is None:
-            return "Not started"
-        elif self.thread.is_alive():
-            return "Running"
-        else:
-            return self.status_queue.get()
-
     def run_cases_bulk(
         self,
-        launcher: str = None,
         path_to_execute: str = None,
     ) -> None:
         """
-        Run the cases in bulk optionally based on the launcher specified.
+        Run the cases in bulk based on the launcher_bulk command.
         This is thought to be used in a cluster environment, as it is a bulk execution of the cases.
-        By default, the command is executed in the output directory, where the cases are saved,
-        and where the example sbatch file is saved.
+        By default, the command is executed in the output directory, where the cases are saved.
 
         Parameters
         ----------
-        launcher : str
-            The launcher to run the cases.
         path_to_execute : str, optional
-            The path to execute the command. Default is None.
+            The path to execute the command. Default is None (uses self.output_dir).
 
         Examples
         --------
-        # This will execute the specified launcher in the output directory.
-        >>> wrapper.run_cases_bulk(launcher="sbatch sbatch_example.sh")
-        # This will execute the specified launcher in the specified path.
-        >>> wrapper.run_cases_bulk(launcher="my_launcher.sh", path_to_execute="/my/path/to/execute")
+        # This will execute the bulk launcher in the output directory.
+        >>> wrapper.run_cases_bulk()
+        # This will execute the bulk launcher in the specified path.
+        >>> wrapper.run_cases_bulk(path_to_execute="/my/path/to/execute")
         """
 
-        if launcher is not None:
-             launcher_str = self.available_launchers.get(launcher, launcher) 
-        elif getattr(self, "custom_launcher_bulk", None):
-             launcher_str = self.custom_launcher_bulk
-        else:
-             if getattr(self, "launcher_bulk", None) in self.available_launchers:
-                 launcher_str = self.available_launchers[self.launcher_bulk]
-             elif "default" in self.available_launchers:
-                 launcher_str = self.available_launchers["default"]
-             else:
-                 raise ValueError(
-                     "Could not find a valid bulk launcher alias. Define 'launcher_bulk' or 'custom_launcher_bulk'."
-                 )
+        if not self.launcher_bulk:
+            raise ValueError("launcher_bulk is not defined. Please set it in __init__.")
 
         if self.env:
-            launcher_cmd = self.env.from_string(launcher_str).render(self.fixed_parameters)
+            launcher_cmd = self.env.from_string(self.launcher_bulk).render(self.fixed_parameters)
         else:
             from jinja2 import Template
-            launcher_cmd = Template(launcher_str).render(self.fixed_parameters)
+            launcher_cmd = Template(self.launcher_bulk).render(self.fixed_parameters)
                 
         if path_to_execute is None:
             path_to_execute = self.output_dir
@@ -562,4 +464,16 @@ class Galerna:
             postprocessed_file = self.postprocess_case(context, overwrite=overwrite, clean_after=clean_after, **kwargs)
             postprocessed_files.append(postprocessed_file)
         return postprocessed_files
+    
+    def monitor_cases(self, **kwargs) -> None:
+        """
+        Monitor the cases execution. This can be implemented to check the status of the cases in a cluster environment, for example.
+        All extra keyword arguments will be passed to the monitor_case method.
 
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments to be passed to the monitor_case method.   
+        """
+
+        

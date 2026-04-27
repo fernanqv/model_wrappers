@@ -12,4 +12,4 @@ module load parallel/20240722-GCCcore-13.3.0
 START_LINE=$(( SLURM_ARRAY_TASK_ID * {{tasks_per_node}} + 1 ))
 END_LINE=$(( START_LINE + {{tasks_per_node}} - 1 ))
 
-sed -n "${START_LINE},${END_LINE}p" commands.txt | parallel -j {{max_workers}} python dummy_script.py {}
+sed -n "${START_LINE},${END_LINE}p" commands.txt | parallel -j {{max_workers}} {{command}} {}

@@ -20,8 +20,7 @@ class BulkArrayRunner(Galerna):
         self,
         tasks_per_node: int = 1,
         max_workers: int = 1,
-        launcher_template: Optional[str] = None,
-        context_format: Optional[str] = None,
+        sbatch_template: Optional[str] = None,
         templates_dir: Optional[str] = None,
         fixed_parameters: Optional[dict] = None,
         **kwargs
@@ -40,21 +39,8 @@ class BulkArrayRunner(Galerna):
         """
         self.tasks_per_node = tasks_per_node
         self.max_workers = max_workers
-        self.launcher_template = launcher_template
-        self.context_format = context_format
+        self.sbatch_template = sbatch_template
         super().__init__(**kwargs)
-
-    def _generate_cases_context(self) -> None:
-        """
-        Generates the base cases context combinations but intercepts the folder 
-        creation logic to force all cases bounding into the same root output_dir.
-        """
-        # Call the parent logic to populate self.cases_context correctly
-        super()._generate_cases_context()
-        
-        # Override case directories so they do not isolate into individual folders
-        for context in self.cases_context:
-            context["case_dir"] = op.abspath(self.output_dir)
 
     def build_cases(
         self,
@@ -74,25 +60,6 @@ class BulkArrayRunner(Galerna):
 
         self.logger.debug(f"Starting to build {len(contexts_to_build)} combined cases for Array Bulk.")
 
-        commands_file = op.join(self.output_dir, "commands.txt")
-        
-        # Determine how to write each line in commands.txt
-        eval_str = self.context_format
-        if eval_str is None and getattr(self, "custom_launcher", None):
-            eval_str = self.custom_launcher
-
-        from jinja2 import Template
-        with open(commands_file, "w") as f:
-            for ctx in contexts_to_build:
-                if eval_str:
-                    if self.env:
-                        line = self.env.from_string(eval_str).render(ctx)
-                    else:
-                        line = Template(eval_str).render(ctx)
-                else:
-                    line = json.dumps(ctx)
-                f.write(line + "\n")
-
         # Create SLURM bulk array script
         num_cases = len(contexts_to_build)
         if num_cases > 0:
@@ -106,12 +73,12 @@ class BulkArrayRunner(Galerna):
         
         slurm_script_path = op.join(self.output_dir, "master_bulk_array.sh")
         
-        if not self.launcher_template or not os.path.isfile(self.launcher_template):
+        if not self.sbatch_template or not os.path.isfile(self.sbatch_template):
             raise FileNotFoundError(
-                "A valid 'launcher_template' file must be provided to use BulkArrayRunner. "
+                "A valid 'sbatch_template' file must be provided to use BulkArrayRunner. "
             )
 
-        with open(self.launcher_template, "r") as template_file:
+        with open(self.sbatch_template, "r") as template_file:
             template_content = template_file.read()
         
         # Allow jinja2 to inject the control variables into the template
